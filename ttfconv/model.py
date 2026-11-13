@@ -27,6 +27,16 @@ def load_converted(arch, ckpt, dev="cuda", ext=None, log=print):
                 m.enable_lowrank_mag("add", sd[f"{n}.mag_A"].shape[1]); nm += 1
             if f"{n}.wfine" in sd and getattr(m, "wfine", None) is None:
                 enable_fine(m, int(meta.get("fine") or 27)); nf += 1
+    ek, hk = "hf.model.embed_tokens.m.codes", "hf.lm_head.m.codes"
+    if ek in sd and hk in sd and not hasattr(model.hf.model.embed_tokens, "m"):
+        # an int-k embedding / head (--intk-emb E:H[:G]): the code matrices, then the checkpoint's codes and groups
+        from ttf.intk_emb import enable_intk_emb
+        spec = (blob.get("args") or {}).get("intk_emb") if isinstance(blob, dict) else None
+        if not spec:
+            bits = lambda k: max(1, int(sd[k].max()).bit_length())
+            spec = f"{bits(ek)}:{bits(hk)}"
+        g = sd[ek].shape[1] // sd["hf.model.embed_tokens.m.lo"].shape[1]
+        enable_intk_emb(model, spec if spec.count(":") == 2 else f"{spec}:{g}", log=log)
     missing, unexpected = model.load_state_dict(sd, strict=False)
     missing = [k for k in missing if not k.endswith("frozen_scale")]
     if missing:
