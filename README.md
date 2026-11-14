@@ -25,6 +25,8 @@ ttf-core's checkpoint form, plus `OUT/result.json`.
 | `ttfconv.fine` | the fine residual: `W = β(T + F/R)`, `F` int8 whose balanced-ternary digits are the extra digits; its layer (`FineTernaryLinear`), GEMMs and GPTQ fit |
 | `ttfconv.model` | `load_converted(arch, ckpt)`: a converted checkpoint back into a model (structure read from its keys) |
 | `ttfconv.finish` | sizes, 4-bit groups, fixed-window scoring |
+| `ttfconv.arch` | architecture discovery: where an HF causal LM's residual norms and branches are, and whether the residual-stream rotation is exact for it (below) |
+| `ttfconv.export` | `.ttf` export emitters for the conversion's layers (ternary adapters, int-k embedding) and the VoxCPM2 family, for [ttf-home](https://github.com/oguzeldereli/ttf-home)'s runtime |
 
 Plug-ins (`--ext`, in the order given; the same specs work for ttf-core's trainer, which uses only their structure):
 
@@ -140,6 +142,32 @@ After 1000 recovery steps (θ16, accumulator rank 256, KD 0.75, 32k tokens per s
 | fold + cd1 + adapters alt 1 | 2.9918 | 1.6816 | 1.3580 |
 | + `prop=1` | 2.9650 | 1.6583 | 1.3398 |
 | + `gmetric` | **2.9572** | **1.6542** | **1.3368** |
+
+## Any architecture: fold rules from the model alone
+
+`python -m ttfconv.arch MODEL_DIR_OR_HF_ID [--json OUT]` finds the fold's rules from the architecture, with no
+per-model code. One traced forward of a tiny random instance of the config finds the residual norms, the branches
+that read them and add to the stream, and per branch the parameter axes that carry the stream (input axes by
+absorbing a diagonal scaling, output axes by rotation equivariance). The whole fold (gains into input axes, one
+rotation on every residual axis, embedding, untied head) is then checked against the original logits, and only an
+exact fold is used.
+
+Of 32 transformers families, 21 fold exactly (relative error ~1e-6), among them Qwen3.5 / Qwen3-Next, Qwen3-MoE,
+Mixtral, gpt-oss, DeepSeek-V3, GLM-4-MoE, BitNet and LFM2. Post-norm and LayerNorm families (Gemma 2 / 3, OLMo 2,
+GLM-4, EXAONE 4, StarCoder2, GPT-NeoX, Cohere, StableLM, Falcon-H1, MiniMax) have no exact residual rotation and
+convert unrotated. For Qwen3.5 the discovered rule equals `ttfconv.fold`'s hand-written one.
+
+## Run a converted model: `.ttf`
+
+ttf-core's `ttf.export` writes a converted checkpoint as one `.ttf` file for ttf-home's runtime; importing
+`ttfconv.export` adds the emitters of the conversion's own layers (both need ttf-core's main after v0.3.0):
+
+```bash
+python -m ttf.export.qwen35 HF_DIR OUT/ckpt.pt model.ttf --check   # Qwen3.5 / 3.8 (needs ttf-core[export])
+```
+
+`ttfconv.export.voxcpm2` holds the graphs of the VoxCPM2 text-to-speech family (language models, local DiT, AudioVAE)
+that the released ttf-VoxCPM2 model was exported with.
 
 ## Qwen3.8-27B
 
